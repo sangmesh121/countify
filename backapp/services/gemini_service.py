@@ -118,9 +118,56 @@ class GeminiService:
                 text = text[7:]
             if text.endswith("```"):
                 text = text[:-3]
-            return json.loads(text)
         except Exception as e:
             print(f"Gemini Details Error: {e}")
             return {"description": "Could not analyze product details.", "specs": []}
+
+    def compare_products(self, input_image_bytes: bytes, reference_image_bytes: bytes) -> dict:
+        """
+        Compares the input image with a reference image using Gemini to detect counterfeit signs.
+        """
+        if not self.api_key:
+             return {"error": "Key missing"}
+
+        try:
+            img1 = Image.open(io.BytesIO(input_image_bytes))
+            img2 = Image.open(io.BytesIO(reference_image_bytes))
+            
+            prompt = """
+            You are an expert counterfeit investigator. 
+            Image 1 is the suspect product (uploaded by user).
+            Image 2 is the official reference product (from a trusted source).
+            
+            Compare them strictly. Look for differences in:
+            - Logo placement, font, and proportions
+            - Stitching quality and patterns
+            - Material texture and finish
+            - Color shade discrepancies
+            - Label details
+            
+            If Image 2 is a generic or different product, state that comparison is invalid.
+            
+            Return a JSON object:
+            {
+                "is_authentic": boolean,
+                "confidence_score": float (0.0 to 1.0),
+                "verdict": "Authentic", "Counterfeit", or "Inconclusive",
+                "discrepancies": ["list", "of", "visual", "differences"],
+                "reasoning": "Brief summary of why"
+            }
+            """
+            
+            response = self.model.generate_content([prompt, img1, img2])
+            text = response.text.strip()
+            
+            if text.startswith("```json"):
+                text = text[7:]
+            if text.endswith("```"):
+                text = text[:-3]
+                
+            return json.loads(text)
+        except Exception as e:
+            print(f"Gemini Comparison Error: {e}")
+            return {"error": str(e), "is_authentic": False, "confidence_score": 0.0, "verdict": "Error", "discrepancies": []}
 
 gemini_service = GeminiService()

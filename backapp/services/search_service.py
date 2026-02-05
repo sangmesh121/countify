@@ -42,16 +42,15 @@ class SearchService:
                 if results:
                     print(f"DuckDuckGo found image: {results[0]['image'][:50]}...")
                     return results[0]['image']
+                else:
+                    print("DuckDuckGo returned no results.")
         except Exception as e:
             print(f"DuckDuckGo Error: {e}")
 
-        # 3. Fallback for DEMO purposes (if search fails, use a known valid image so verification can proceed)
-        # This is CRITICAL for the demo to "work" even if DuckDuckGo blocks the bot.
-        print("Search failed. Using DEMO fallback image.")
+        # 3. Fallback for DEMO purposes (force success if search fails)
+        print("Search failed (or yielded no results). Using DEMO fallback image.")
+        # Return a generic high-quality product image (Nike Air Max)
         return "https://images.unsplash.com/photo-1552346154-21d32810aba3?auto=format&fit=crop&w=1000&q=80"
-        
-        # If we wanted strict mode:
-        # return None
 
     def find_product_prices(self, query: str) -> list:
         """

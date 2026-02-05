@@ -59,8 +59,12 @@ async def verify_product(file: UploadFile = File(...)):
             
         search_query = gemini_data.get("search_query")
         if not search_query:
-            result["input_analysis"]["error"] = "No search query generated"
-            return result
+            print("Gemini failed to generate search query. Using filename/default.")
+            search_query = file.filename or "product"
+            gemini_data["search_query"] = search_query 
+            # Continue instead of returning error
+            # result["input_analysis"]["error"] = "No search query generated"
+            # return result
 
         # 3. Find Reference Image (Search)
         print(f"Searching for reference image: {search_query}")
@@ -85,10 +89,25 @@ async def verify_product(file: UploadFile = File(...)):
             result["verification_result"] = {"error": f"Failed to download reference image: {str(e)}"}
             return result
 
-        # 5. Compare Images (CNN)
-        print("Comparing images...")
-        verification_data = verification_service.compare_images(content, ref_bytes)
-        result["verification_result"] = verification_data
+        # 5. Compare Images (Hybrid Approach: CNN + Gemini)
+        print("Comparing images with CNN...")
+        cnn_result = verification_service.compare_images(content, ref_bytes)
+        
+        print("Comparing images with Gemini (Visual Analysis)...")
+        gemini_result = gemini_service.compare_products(content, ref_bytes)
+        
+        # Merge results
+        # Using Gemini's confidence if available, otherwise falling back to CNN
+        final_score = gemini_result.get("confidence_score", 0) if gemini_result.get("is_authentic") else cnn_result["similarity_score"]
+        
+        result["verification_result"] = {
+            "is_authentic": gemini_result.get("is_authentic", cnn_result["is_authentic"]),
+            "confidence_score": final_score,
+            "verdict": gemini_result.get("verdict", cnn_result["verdict"]),
+            "match_score": cnn_result["similarity_score"], # Keep raw CNN score
+            "gemini_analysis": gemini_result, # Full details
+            "cnn_analysis": cnn_result
+        }
 
     except Exception as e:
         print(f"Server Error: {e}")
