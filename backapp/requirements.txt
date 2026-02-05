@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+python-multipart
+google-generativeai
+requests
+python-dotenv
+pillow
+beautifulsoup4
+numpy
+torch
+torchvision
+scikit-learn
+duckduckgo-search
