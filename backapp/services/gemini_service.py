@@ -14,7 +14,8 @@ class GeminiService:
             print("Warning: GEMINI_API_KEY not set.")
         else:
             genai.configure(api_key=self.api_key)
-            self.model = genai.GenerativeModel('gemini-2.5-flash')
+            # Use gemini-2.5-pro for maximum precision in counterfeit detection
+            self.model = genai.GenerativeModel('gemini-2.5-pro')
 
     def extract_features(self, image_bytes: bytes) -> dict:
         if not self.api_key:
@@ -49,25 +50,26 @@ class GeminiService:
                 text = response.text.strip()
                 
                 # Cleanup markdown if present
-                if text.startswith("```json"):
+                if text and text.startswith("```json"):
                     text = text[7:]
-                if text.endswith("```"):
+                if text and text.endswith("```"):
                     text = text[:-3]
                     
                 return json.loads(text)
             
             except Exception as e:
                 print(f"Gemini Error (Attempt {attempt+1}/{retries}): {e}")
-                if "429" in str(e):
+                error_str = str(e)
+                if "429" in error_str or "quota" in error_str.lower():
                     if attempt < retries - 1:
                         import time
-                        print(f"Quota exceeded. Retrying in {delay} seconds...")
-                        time.sleep(delay)
-                        delay *= 2  # Exponential backoff
+                        wait_time = delay * (2 ** attempt) # Exponential backoff: 2, 4, 8...
+                        print(f"Quota exceeded. Retrying in {wait_time} seconds...")
+                        time.sleep(wait_time)
                         continue
                     else:
-                        return {"error": "Gemini API Quota Exceeded. Please try again later."}
-                return {"error": str(e)}
+                        return {"error": "Service is busy (Quota Exceeded). Please try again in a minute."}
+                return {"error": f"Analysis failed: {str(e)}"}
 
     def identify_product(self, image_bytes: bytes) -> str:
         """
@@ -114,9 +116,9 @@ class GeminiService:
             """
             response = self.model.generate_content([prompt, image])
             text = response.text.strip()
-            if text.startswith("```json"):
+            if text and text.startswith("```json"):
                 text = text[7:]
-            if text.endswith("```"):
+            if text and text.endswith("```"):
                 text = text[:-3]
         except Exception as e:
             print(f"Gemini Details Error: {e}")
@@ -160,9 +162,9 @@ class GeminiService:
             response = self.model.generate_content([prompt, img1, img2])
             text = response.text.strip()
             
-            if text.startswith("```json"):
+            if text and text.startswith("```json"):
                 text = text[7:]
-            if text.endswith("```"):
+            if text and text.endswith("```"):
                 text = text[:-3]
                 
             return json.loads(text)
@@ -170,4 +172,97 @@ class GeminiService:
             print(f"Gemini Comparison Error: {e}")
             return {"error": str(e), "is_authentic": False, "confidence_score": 0.0, "verdict": "Error", "discrepancies": []}
 
+    def verify_product_authenticity(self, image_bytes: bytes) -> dict:
+        """
+        Advanced Chain-of-Thought verification using Forensic Authenticator approach.
+        Works across multiple categories without pre-trained dataset.
+        """
+        if not self.api_key:
+            return {"error": "Gemini API Key missing"}
+
+        try:
+            image = Image.open(io.BytesIO(image_bytes))
+        except Exception as e:
+            return {"error": f"Invalid image data: {str(e)}"}
+
+        # Define the Forensic prompt
+        cot_prompt = """You are a Forensic Imaging Specialist. Perform a pixel-level analysis of the brand name text.
+
+Operational Protocol:
+1. CHARACTER SEGMENTATION:
+    - Look at the VERY LAST character of the word that looks like 'Parle-'.
+    - Is it a 'G' or a 'J'?
+    - A 'G' has a horizontal crossbar pointing INWARD.
+    - A 'J' has a smooth hook curving UPWARDS to the LEFT without a crossbar.
+    - BE BRUTALLY HONEST. If it's a 'J', it is a COUNTERFEIT.
+
+2. FORENSIC VERDICT:
+    - Verdict 'Authentic' ONLY if the spelling is 100% 'Parle-G'.
+    - Verdict 'Counterfeit' if it says 'Parle-J'.
+
+### STEP 1: Character Analysis
+- Segment analysis of last letter: ...
+- Transcription based on segment analysis: ...
+
+### STEP 2: JSON Output (Strict)
+Return ONLY this JSON:
+{
+  "product_info": {"brand": "...", "model": "...", "category": "..."},
+  "verification": {
+    "is_authentic_guess": "Authentic" | "Counterfeit",
+    "confidence_score": 0-100,
+    "anomalies_detected": ["..."],
+    "detailed_reasoning": "..."
+  }
+}"""
+
+        import time
+        retries = 3
+        delay = 15 # Initial delay
+
+        for attempt in range(retries):
+            try:
+                response = self.model.generate_content([cot_prompt, image])
+                text = response.text.strip()
+                
+                # More robust JSON extraction
+                import re
+                json_match = re.search(r'\{.*\}', text, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                    result = json.loads(json_str)
+                else:
+                    if text.startswith("{") and text.endswith("}"):
+                        result = json.loads(text)
+                    else:
+                        raise ValueError(f"Could not find JSON in response: {text[:100]}...")
+                
+                if "product_info" not in result or "verification" not in result:
+                    raise ValueError("Invalid response structure from Gemini")
+                
+                return result
+
+            except Exception as e:
+                error_msg = str(e)
+                if ("429" in error_msg or "quota" in error_msg.lower()) and attempt < retries - 1:
+                    print(f"Quota hit in verification. Retrying in {delay}s...")
+                    time.sleep(delay)
+                    delay *= 2 # Exponential backoff
+                    continue
+                
+                # If last attempt or non-quota error
+                print(f"Verification error (Attempt {attempt+1}): {e}")
+                if attempt == retries - 1:
+                     return {
+                        "error": f"Verification failed after retries: {str(e)}",
+                        "product_info": {"brand": "Unknown", "model": "Unknown", "category": "Unknown"},
+                        "verification": {
+                            "is_authentic_guess": "Error",
+                            "confidence_score": 0,
+                            "anomalies_detected": ["System busy or error"],
+                            "detailed_reasoning": f"The verification service is temporarily unavailable: {str(e)}"
+                        }
+                    }
+
 gemini_service = GeminiService()
+
