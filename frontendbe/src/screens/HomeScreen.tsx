@@ -26,7 +26,7 @@ export const HomeScreen = ({ navigation }: any) => {
                         <Text style={styles.cardTitle}>Verify Authenticity</Text>
                         <Text style={styles.cardDesc}>Check if a product is genuine or fake.</Text>
                     </View>
-                    <Ionicons name="chevron-forward" size={24} color={colors.textDim} />
+                    <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
                 </TouchableOpacity>
 
                 {/* Price Card */}
@@ -41,7 +41,7 @@ export const HomeScreen = ({ navigation }: any) => {
                         <Text style={styles.cardTitle}>Check Price</Text>
                         <Text style={styles.cardDesc}>Find best online prices and sellers.</Text>
                     </View>
-                    <Ionicons name="chevron-forward" size={24} color={colors.textDim} />
+                    <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
                 </TouchableOpacity>
 
                 {/* Details Card */}
@@ -56,7 +56,7 @@ export const HomeScreen = ({ navigation }: any) => {
                         <Text style={styles.cardTitle}>Product Details</Text>
                         <Text style={styles.cardDesc}>Get detailed specs and information.</Text>
                     </View>
-                    <Ionicons name="chevron-forward" size={24} color={colors.textDim} />
+                    <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
                 </TouchableOpacity>
 
             </View>
@@ -78,7 +78,7 @@ const styles = StyleSheet.create({
     },
     subtitle: {
         fontSize: 16,
-        color: colors.textDim,
+        color: colors.textSecondary,
     },
     content: {
         flex: 1,
@@ -120,6 +120,6 @@ const styles = StyleSheet.create({
     },
     cardDesc: {
         fontSize: 14,
-        color: colors.textDim,
+        color: colors.textSecondary,
     },
 });

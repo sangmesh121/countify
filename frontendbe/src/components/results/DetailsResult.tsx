@@ -19,7 +19,9 @@ export const DetailsResult: React.FC<DetailsResultProps> = ({ description, specs
     return (
         <View style={styles.container}>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>Description</Text>
-            <Text style={[styles.description, { color: colors.textSecondary }]}>{description}</Text>
+            <Text style={[styles.description, { color: colors.textSecondary }]}>
+                {description || 'No detailed description available for this product.'}
+            </Text>
 
             <Text style={[styles.sectionTitle, { color: colors.text, marginTop: spacing.l }]}>Specifications</Text>
             <View style={[styles.specsCard, { backgroundColor: colors.surface }]}>

@@ -42,7 +42,7 @@ export const VerificationResult: React.FC<VerificationResultProps> = ({ status, 
             {/* Status Card */}
             <View style={[styles.statusCard, { backgroundColor: colors.surface, borderColor: getStatusColor(status), borderWidth: 2 }]}>
                 <FontAwesome5 name={getStatusIcon(status)} size={48} color={getStatusColor(status)} style={{ marginBottom: spacing.m }} />
-                <Text style={[styles.statusTitle, { color: colors.text }]}>Likely {status.toUpperCase()}</Text>
+                <Text style={[styles.statusTitle, { color: colors.text }]}> - {status.toUpperCase()}</Text>
                 <Text style={[styles.statusDesc, { color: colors.textSecondary }]}>
                     Based on our AI analysis, this product appears to be {status}.
                 </Text>

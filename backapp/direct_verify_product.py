@@ -8,11 +8,12 @@ from services.gemini_service import GeminiService
 sys.stdout.reconfigure(encoding='utf-8')
 
 def run_verification():
-    # Image path from previous context
-    img_path = r"C:\Users\sangm\Downloads\246d6da6-e8e9-491d-8fb8-700ba0ad8bd6.png"
+    # Image path - default to parle_test.jpg if not provided
+    img_path = sys.argv[1] if len(sys.argv) > 1 else "parle_test.jpg"
     
     if not os.path.exists(img_path):
         print(f"❌ Image not found: {img_path}")
+        print("Usage: python direct_verify_product.py <image_path>")
         return
 
     # Redirect output to file with utf-8 encoding

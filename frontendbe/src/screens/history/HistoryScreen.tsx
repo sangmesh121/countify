@@ -19,12 +19,17 @@ export const HistoryScreen = ({ navigation }: any) => {
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
     const [activeFilter, setActiveFilter] = useState('all');
+    const [page, setPage] = useState(1);
+    const [totalPages, setTotalPages] = useState(1);
 
     const fetchHistory = useCallback(async () => {
         if (!user) return;
         setLoading(true);
         try {
-            const data = await SupabaseService.getUserHistory(user.id);
+            const response = await SupabaseService.getUserHistory(user.id, page, 5);
+            const data = response.data || [];
+            setTotalPages(response.totalPages);
+
             // Transform data for UI
             const formatted = data.map((item: any) => {
                 const result = item.scan_results?.[0] || {};
@@ -62,7 +67,7 @@ export const HistoryScreen = ({ navigation }: any) => {
         } finally {
             setLoading(false);
         }
-    }, [user?.id]);
+    }, [user?.id, page]);
 
     useFocusEffect(
         useCallback(() => {
@@ -147,6 +152,29 @@ export const HistoryScreen = ({ navigation }: any) => {
                     showsVerticalScrollIndicator={false}
                 />
             )}
+
+            {/* Pagination Controls */}
+            {!loading && scans.length > 0 && (
+                <View style={styles.paginationContainer}>
+                    <Button
+                        title="Previous"
+                        onPress={() => setPage(p => Math.max(1, p - 1))}
+                        disabled={page === 1}
+                        variant="outline"
+                        style={{ width: 100 }}
+                    />
+                    <Text style={[styles.pageText, { color: colors.text }]}>
+                        Page {page} of {totalPages}
+                    </Text>
+                    <Button
+                        title="Next"
+                        onPress={() => setPage(p => Math.min(totalPages, p + 1))}
+                        disabled={page === totalPages}
+                        variant="outline"
+                        style={{ width: 100 }}
+                    />
+                </View>
+            )}
         </Container>
     );
 };
@@ -199,5 +227,17 @@ const styles = StyleSheet.create({
     emptyText: {
         textAlign: 'center',
         paddingHorizontal: 40,
+    },
+    paginationContainer: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: spacing.m,
+        borderTopWidth: 1,
+        borderTopColor: '#eee',
+    },
+    pageText: {
+        fontSize: 14,
+        fontWeight: '600',
     },
 });

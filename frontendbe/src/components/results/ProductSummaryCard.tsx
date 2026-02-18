@@ -5,16 +5,19 @@ import { spacing } from '../../theme/colors';
 import { FontAwesome5 } from '@expo/vector-icons';
 
 interface ProductSummaryProps {
-    image: string;
+    image?: string;
+    frontImage?: string;
+    backImage?: string;
     name: string;
     brand: string;
     sku?: string;
+    description?: string;
     confidence: number;
     style?: ViewStyle;
 }
 
 export const ProductSummaryCard: React.FC<ProductSummaryProps> = ({
-    image, name, brand, sku, confidence, style
+    image, frontImage, backImage, name, brand, sku, description, confidence, style
 }) => {
     const { colors, isDark } = useTheme();
 
@@ -35,11 +38,21 @@ export const ProductSummaryCard: React.FC<ProductSummaryProps> = ({
             },
             style
         ]}>
-            <Image source={{ uri: image }} style={styles.image} />
+            <View>
+                {frontImage && backImage ? (
+                    <View style={styles.dualImageContainer}>
+                        <Image source={{ uri: frontImage }} style={styles.dualImage} />
+                        <Image source={{ uri: backImage }} style={styles.dualImage} />
+                    </View>
+                ) : (
+                    <Image source={{ uri: frontImage || backImage || image }} style={styles.image} />
+                )}
+            </View>
             <View style={styles.info}>
                 <Text style={[styles.brand, { color: colors.textSecondary }]}>{brand}</Text>
                 <Text style={[styles.name, { color: colors.text }]} numberOfLines={2}>{name}</Text>
                 {sku && <Text style={[styles.sku, { color: colors.textSecondary }]}>SKU: {sku}</Text>}
+                {description && <Text style={[styles.description, { color: colors.textSecondary }]} numberOfLines={2}>{description}</Text>}
 
                 <View style={[styles.confidenceBadge, { backgroundColor: getConfidenceColor(confidence) + '20' }]}>
                     <FontAwesome5 name="magic" size={12} color={getConfidenceColor(confidence)} />
@@ -70,6 +83,17 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         backgroundColor: '#eee',
         marginRight: spacing.m,
+    },
+    dualImageContainer: {
+        flexDirection: 'column',
+        marginRight: spacing.m,
+        gap: 4,
+    },
+    dualImage: {
+        width: 40,
+        height: 40,
+        borderRadius: 4,
+        backgroundColor: '#eee',
     },
     info: {
         flex: 1,
@@ -102,5 +126,10 @@ const styles = StyleSheet.create({
     confidenceText: {
         fontWeight: 'bold',
         fontSize: 12,
+    },
+    description: {
+        fontSize: 12,
+        marginBottom: 8,
+        fontStyle: 'italic',
     },
 });

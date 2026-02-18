@@ -27,13 +27,14 @@ export const ScanScreen = ({ navigation, route }: any) => {
     const [intent, setIntent] = useState<ScanIntent>('verify');
 
     // Inputs
-    const [imageUri, setImageUri] = useState<string | null>(null);
+    const [frontImage, setFrontImage] = useState<string | null>(null);
+    const [backImage, setBackImage] = useState<string | null>(null);
+    const [activeSlot, setActiveSlot] = useState<'front' | 'back' | null>(null);
     const [url, setUrl] = useState('');
 
     // Camera
     const [permission, requestPermission] = useCameraPermissions();
     const cameraRef = useRef<CameraView>(null);
-    const [scanned, setScanned] = useState(false);
 
     useEffect(() => {
         if (route.params?.mode) {
@@ -47,7 +48,7 @@ export const ScanScreen = ({ navigation, route }: any) => {
         }
     }, [method]);
 
-    const handlePickImage = async () => {
+    const handlePickImage = async (slot: 'front' | 'back') => {
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ImagePicker.MediaTypeOptions.Images,
             allowsEditing: true,
@@ -56,17 +57,19 @@ export const ScanScreen = ({ navigation, route }: any) => {
         });
 
         if (!result.canceled) {
-            setImageUri(result.assets[0].uri);
+            if (slot === 'front') setFrontImage(result.assets[0].uri);
+            else setBackImage(result.assets[0].uri);
         }
     };
 
     const handleCameraCapture = async () => {
-        if (cameraRef.current) {
+        if (cameraRef.current && activeSlot) {
             try {
                 const photo = await cameraRef.current.takePictureAsync();
                 if (photo) {
-                    setImageUri(photo.uri);
-                    setScanned(true); // Stop preview
+                    if (activeSlot === 'front') setFrontImage(photo.uri);
+                    else setBackImage(photo.uri);
+                    setActiveSlot(null); // Return to overview
                 }
             } catch (e) {
                 console.error(e);
@@ -76,15 +79,21 @@ export const ScanScreen = ({ navigation, route }: any) => {
     };
 
     const handleClear = () => {
-        setImageUri(null);
-        setScanned(false);
+        setFrontImage(null);
+        setBackImage(null);
+        setActiveSlot(null);
         setUrl('');
+    };
+
+    const handleRemoveImage = (slot: 'front' | 'back') => {
+        if (slot === 'front') setFrontImage(null);
+        else setBackImage(null);
     };
 
     const handleSubmit = async () => {
         if (method === 'camera' || method === 'upload') {
-            if (!imageUri) {
-                Alert.alert('Input Required', 'Please provide an image.');
+            if (!frontImage && !backImage) {
+                Alert.alert('Input Required', 'Please provide at least one image (Front or Back).');
                 return;
             }
         } else if (method === 'url') {
@@ -102,27 +111,31 @@ export const ScanScreen = ({ navigation, route }: any) => {
         setIsProcessing(true);
         try {
             let apiResult = null;
-            let finalImageUrl = imageUri;
+            let finalImageUrl = frontImage || backImage;
 
             // 1. Upload & Verify
-            if (method !== 'url' && imageUri) {
-                // Determine if we need to upload to Supabase first OR just send to backend. 
-                // The task is "search by uploading", usually implies sending the image to the search engine.
-                // Our VerificationService takes the local URI and uploads it to the backend.
-                // We might still want to upload to Supabase for history persistence, but the backend verification is priority.
+            if (method !== 'url') {
+                if (!frontImage && !backImage) {
+                    Alert.alert('Input Required', 'Please provide at least one image.');
+                    setIsProcessing(false);
+                    return;
+                }
+
+                // Use the first available image as the "main" one for display/history
+                finalImageUrl = frontImage || backImage;
 
                 try {
                     // Call our new Python Backend API based on intent
                     if (intent === 'price') {
                         console.log("Checking Price...");
-                        apiResult = await VerificationService.checkPrice(imageUri);
+                        apiResult = await VerificationService.checkPrice(frontImage, backImage);
                     } else if (intent === 'details') {
                         console.log("Getting Details...");
-                        apiResult = await VerificationService.getProductDetails(imageUri);
+                        apiResult = await VerificationService.getProductDetails(frontImage, backImage);
                     } else {
                         // Default: verify
                         console.log("Verifying...");
-                        apiResult = await VerificationService.verifyProduct(imageUri);
+                        apiResult = await VerificationService.verifyProduct(frontImage, backImage);
                     }
 
                     console.log("API Result:", apiResult);
@@ -135,7 +148,12 @@ export const ScanScreen = ({ navigation, route }: any) => {
 
                 // Optional: Upload to Supabase for persistence if needed
                 try {
-                    finalImageUrl = await SupabaseService.uploadImage(imageUri, 'scans');
+                    // Upload whatever we have. For history, maybe just one?
+                    // Ideally we upload both, but existing schema might be single image. 
+                    // Let's just upload the main one for now to keep history working.
+                    if (finalImageUrl) {
+                        finalImageUrl = await SupabaseService.uploadImage(finalImageUrl, 'scans');
+                    }
                 } catch (err) {
                     console.warn("Supabase upload failed, falling back to local URI", err);
                 }
@@ -176,6 +194,8 @@ export const ScanScreen = ({ navigation, route }: any) => {
                 method,
                 intent,
                 data: finalImageUrl || url,
+                frontImage,
+                backImage,
                 scanId: scanData.id,
                 mockResult: null, // Clear mock
                 apiResult: apiResult // Pass real result
@@ -188,71 +208,84 @@ export const ScanScreen = ({ navigation, route }: any) => {
         }
     };
 
-    // Render Camera Input
-    const renderCameraInput = () => {
-        if (Platform.OS === 'web') {
+    // Render Camera Interface
+    const renderCameraInterface = () => {
+        // If we are actively scanning a slot, show camera
+        if (activeSlot) {
+            if (!permission?.granted) {
+                return (
+                    <View style={styles.inputContainer}>
+                        <Text style={{ textAlign: 'center', marginBottom: 10, color: colors.text }}>We need your permission to show the camera</Text>
+                        <Button onPress={requestPermission} title="Grant Permission" />
+                    </View>
+                );
+            }
+
             return (
-                <View style={[styles.inputContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                    <Text style={{ color: colors.text }}>Camera not fully supported on Web. Please use Upload.</Text>
-                    <Button title="Switch to Upload" onPress={() => setMethod('upload')} style={{ marginTop: 10 }} />
+                <View style={[styles.inputContainer, { padding: 0, overflow: 'hidden', height: 400, backgroundColor: '#000' }]}>
+                    <CameraView style={{ flex: 1 }} ref={cameraRef}>
+                        <View style={styles.cameraOverlay}>
+                            <Text style={styles.overlayText}>{activeSlot === 'front' ? "Scan Front (Brand/Logo)" : "Scan Back (Ingredients/Info)"}</Text>
+                            <View style={styles.scanFrame} />
+                            <TouchableOpacity style={styles.captureBtn} onPress={handleCameraCapture}>
+                                <View style={styles.captureInner} />
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.closeCameraBtn} onPress={() => setActiveSlot(null)}>
+                                <FontAwesome5 name="times" size={20} color="#fff" />
+                            </TouchableOpacity>
+                        </View>
+                    </CameraView>
                 </View>
             );
         }
 
-        if (!permission?.granted) {
-            return (
-                <View style={styles.inputContainer}>
-                    <Text style={{ textAlign: 'center', marginBottom: 10, color: colors.text }}>We need your permission to show the camera</Text>
-                    <Button onPress={requestPermission} title="Grant Permission" />
-                </View>
-            );
-        }
+        // Otherwise show the Dual Slot Selector
+        return renderDualSlotSelector();
+    };
 
-        if (imageUri && scanned) {
-            return (
-                <View style={[styles.inputContainer, { padding: 0, overflow: 'hidden' }]}>
-                    <Image source={{ uri: imageUri }} style={{ width: '100%', height: 300 }} />
-                    <TouchableOpacity style={styles.retakeBtn} onPress={handleClear}>
-                        <FontAwesome5 name="times" size={16} color="#fff" />
-                        <Text style={{ color: '#fff', marginLeft: 8 }}>Retake</Text>
-                    </TouchableOpacity>
-                </View>
-            );
-        }
+    // Render Dual Slot Selector (for both Camera and Upload modes)
+    const renderDualSlotSelector = () => {
+        const renderSlot = (slot: 'front' | 'back', image: string | null, label: string) => (
+            <TouchableOpacity
+                style={[styles.slotContainer, { borderColor: colors.border, backgroundColor: colors.surface }]}
+                onPress={() => {
+                    if (image) return; // Do nothing if image exists (use clear button)
+                    if (method === 'camera') setActiveSlot(slot);
+                    else handlePickImage(slot);
+                }}
+            >
+                {image ? (
+                    <>
+                        <Image source={{ uri: image }} style={styles.slotImage} />
+                        <TouchableOpacity style={styles.slotClearBtn} onPress={() => handleRemoveImage(slot)}>
+                            <FontAwesome5 name="times-circle" size={24} color="#FF5252" />
+                        </TouchableOpacity>
+                        <View style={styles.slotBadge}>
+                            <Text style={styles.slotBadgeText}>{label}</Text>
+                        </View>
+                    </>
+                ) : (
+                    <View style={styles.slotPlaceholder}>
+                        <FontAwesome5 name={method === 'camera' ? "camera" : "image"} size={32} color={colors.textSecondary} />
+                        <Text style={[styles.slotLabel, { color: colors.textSecondary }]}>Add {label}</Text>
+                        <Text style={[styles.slotSubLabel, { color: colors.textSecondary }]}>
+                            {slot === 'front' ? 'Logo & Branding' : 'Ingredients & Info'}
+                        </Text>
+                    </View>
+                )}
+            </TouchableOpacity>
+        );
 
         return (
-            <View style={[styles.inputContainer, { padding: 0, overflow: 'hidden', height: 300, backgroundColor: '#000' }]}>
-                <CameraView style={{ flex: 1 }} ref={cameraRef}>
-                    <View style={styles.cameraOverlay}>
-                        {/* Scan Frame */}
-                        <View style={styles.scanFrame} />
-                        {/* Capture Button */}
-                        <TouchableOpacity style={styles.captureBtn} onPress={handleCameraCapture}>
-                            <View style={styles.captureInner} />
-                        </TouchableOpacity>
-                    </View>
-                </CameraView>
+            <View style={styles.dualContainer}>
+                {renderSlot('front', frontImage, "Front View")}
+                {renderSlot('back', backImage, "Back View")}
+                <Text style={{ textAlign: 'center', marginTop: 10, color: colors.textSecondary, fontSize: 12 }}>
+                    For best results, upload both views.
+                </Text>
             </View>
         );
     };
-
-    // Render Upload Input
-    const renderUploadInput = () => (
-        <View style={[styles.inputContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            {imageUri ? (
-                <View>
-                    <Image source={{ uri: imageUri }} style={{ width: '100%', height: 200, borderRadius: 8 }} resizeMode="cover" />
-                    <Button title="Remove Image" variant="outline" onPress={handleClear} style={{ marginTop: 10 }} />
-                </View>
-            ) : (
-                <View style={{ alignItems: 'center', padding: 20 }}>
-                    <FontAwesome5 name="cloud-upload-alt" size={40} color={colors.primary} style={{ marginBottom: 10 }} />
-                    <Text style={{ color: colors.textSecondary, marginBottom: 10 }}>Select an image from gallery</Text>
-                    <Button title="Select Image" onPress={handlePickImage} />
-                </View>
-            )}
-        </View>
-    );
 
     // Render URL Input
     const renderUrlInput = () => (
@@ -287,8 +320,8 @@ export const ScanScreen = ({ navigation, route }: any) => {
 
                 {/* Dynamic Input Area */}
                 <View style={styles.section}>
-                    {method === 'camera' && renderCameraInput()}
-                    {method === 'upload' && renderUploadInput()}
+                    {method === 'camera' && renderCameraInterface()}
+                    {method === 'upload' && renderDualSlotSelector()}
                     {method === 'url' && renderUrlInput()}
                 </View>
 
@@ -300,7 +333,7 @@ export const ScanScreen = ({ navigation, route }: any) => {
                     title={isProcessing ? "Processing..." : getButtonTitle()}
                     onPress={handleSubmit}
                     style={{ marginTop: spacing.m }}
-                    disabled={isProcessing || (!imageUri && method !== 'url') || (method === 'url' && !url)}
+                    disabled={isProcessing || ((!frontImage && !backImage) && method !== 'url') || (method === 'url' && !url)}
                     loading={isProcessing}
                 />
             </ScrollView>
@@ -375,5 +408,79 @@ const styles = StyleSheet.create({
         borderRadius: 20,
         flexDirection: 'row',
         alignItems: 'center',
+    },
+    // Dual Slot Styles
+    dualContainer: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        gap: 10,
+    },
+    slotContainer: {
+        flex: 1,
+        borderWidth: 1,
+        borderStyle: 'dashed',
+        borderRadius: 12,
+        height: 180,
+        overflow: 'hidden',
+        position: 'relative',
+    },
+    slotPlaceholder: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 10,
+    },
+    slotLabel: {
+        marginTop: 8,
+        fontWeight: 'bold',
+        fontSize: 14,
+    },
+    slotSubLabel: {
+        fontSize: 10,
+        textAlign: 'center',
+        marginTop: 4,
+    },
+    slotImage: {
+        width: '100%',
+        height: '100%',
+        resizeMode: 'cover',
+    },
+    slotClearBtn: {
+        position: 'absolute',
+        top: 5,
+        right: 5,
+        backgroundColor: '#fff',
+        borderRadius: 12,
+    },
+    slotBadge: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        padding: 4,
+        alignItems: 'center',
+    },
+    slotBadgeText: {
+        color: '#fff',
+        fontSize: 10,
+        fontWeight: 'bold',
+    },
+    overlayText: {
+        color: '#fff',
+        fontSize: 18,
+        fontWeight: 'bold',
+        marginBottom: 20,
+        textShadowColor: 'rgba(0, 0, 0, 0.75)',
+        textShadowOffset: { width: -1, height: 1 },
+        textShadowRadius: 10
+    },
+    closeCameraBtn: {
+        position: 'absolute',
+        top: 40,
+        right: 20,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        padding: 15,
+        borderRadius: 30,
     },
 });
