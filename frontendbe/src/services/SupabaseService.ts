@@ -64,19 +64,34 @@ export const SupabaseService = {
         if (error) throw error;
     },
 
-    async getUserHistory(userId: string) {
-        // Fetch scans with their results
-        const { data, error } = await supabase
+    async getUserHistory(userId: string, page: number = 1, limit: number = 5) {
+        // Calculate pagination range
+        const from = (page - 1) * limit;
+        const to = from + limit - 1;
+
+        // Fetch scans with their results, ordered by creation date descending
+        const { data, error, count } = await supabase
             .from('scans')
             .select(`
                 *,
                 scan_results (*),
                 price_results (*)
-            `)
+            `, { count: 'exact' })
             .eq('user_id', userId)
-            .order('created_at', { ascending: false });
+            .order('created_at', { ascending: false })
+            .range(from, to);
+
         if (error) throw error;
-        return data;
+
+        const totalRecords = count || 0;
+        const totalPages = Math.ceil(totalRecords / limit);
+
+        return {
+            currentPage: page,
+            totalPages: totalPages,
+            totalRecords: totalRecords,
+            data: data
+        };
     },
 
     // --- SUPPORT ---

@@ -1,6 +1,10 @@
 import requests
 import os
 from duckduckgo_search import DDGS
+from serpapi import GoogleSearch
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class SearchService:
     def __init__(self):
@@ -55,60 +59,111 @@ class SearchService:
     def find_product_prices(self, query: str) -> list:
         """
         Finds online prices for the product query.
-        Returns list of dicts: {seller, price, currency, link, rating}
+        Returns list of dicts: {seller, price, currency, link, rating, thumbnail}
         """
         results_list = []
-        try:
-            print(f"Searching prices for: {query}")
-            # DuckDuckGo Text Search (looking for shopping results)
-            with DDGS() as ddgs:
-                # Search for "buy <product> online"
-                search_results = list(ddgs.text(f"buy {query} online price", region="wt-wt", safesearch="off", max_results=8))
+        
+        # 1. Try SerpApi (Google Shopping) if Key is present
+        if self.api_key:
+            print(f"Using SerpApi (Google Shopping) for prices: {query}")
+            params = {
+                "engine": "google_shopping",
+                "q": query,
+                "api_key": self.api_key,
+                "google_domain": "google.co.in",
+                "gl": "in",
+                "hl": "en",
+                "num": 10
+            }
+            try:
+                search = GoogleSearch(params)
+                results = search.get_dict()
+                shopping_results = results.get("shopping_results", [])
                 
-                for res in search_results:
-                    title = res.get('title', '')
-                    body = res.get('body', '')
-                    href = res.get('href', '')
+                for res in shopping_results:
+                    seller = res.get("source", "Unknown")
+                    price = res.get("price", 0) # Could be "₹1,000" string
+                    link = res.get("product_link") or res.get("link", "")
+                    rating = res.get("rating", 0)
+                    thumbnail = res.get("thumbnail", "")
+                    title = res.get("title", "")
                     
-                    # Basic extraction logic (Mocking the intelligence of extracting exact price for stability)
-                    # In a real scraper, we'd regex for price. Here we simulate finding it or assign a realistic variation if link looks like a shop.
-                    
-                    price = 0.0
-                    seller = "Unknown"
-                    
-                    # Detect Seller
-                    if "amazon" in href: seller = "Amazon"
-                    elif "ebay" in href: seller = "eBay"
-                    elif "stockx" in href: seller = "StockX"
-                    elif "goat" in href: seller = "GOAT"
-                    elif "nike" in href: seller = "Nike"
-                    elif "farfetch" in href: seller = "Farfetch"
-                    else: seller = title.split(' ')[0] # Fallback
-                    
-                    # Simulate Price (Real extraction is hard with just DDG text API)
-                    import random
-                    base_price = 100 + len(query) * 2 # varied base
-                    price = round(base_price * (0.9 + 0.2 * random.random()), 2) 
-                    
+                    # Normalize price
+                    price_val = 0.0
+                    currency = "₹"
+                    if isinstance(price, (int, float)):
+                         price_val = float(price)
+                    elif isinstance(price, str):
+                        # Extract number
+                        import re
+                        # simple extraction
+                        clean = re.sub(r'[^\d.]', '', price)
+                        try: price_val = float(clean)
+                        except: price_val = 0.0
+                        if "$" in price: currency = "$"
+                        elif "€" in price: currency = "€"
+                        elif "£" in price: currency = "£"
+                        
                     results_list.append({
                         "seller": seller,
-                        "price": price,
-                        "currency": "USD",
-                        "link": href,
-                        "rating": round(3.5 + 1.5 * random.random(), 1)
+                        "price": price_val,
+                        "currency": currency,
+                        "link": link,
+                        "rating": rating,
+                        "title": title,
+                        "thumbnail": thumbnail
                     })
+                    
+                if results_list:
+                    return results_list
+                else:
+                    print("SerpApi Shopping returned no results.")
+                    
+            except Exception as e:
+                print(f"SerpApi Project Price Error: {e}")
 
-        except Exception as e:
-            print(f"Price Search Error: {e}")
-
-        # Ensure we have some data for the demo if search fails or returns non-shopping links
+        # 2. Fallback to DuckDuckGo
         if not results_list:
-            results_list = [
-                {"seller": "StockX", "price": 185.00, "currency": "USD", "link": "https://stockx.com", "rating": 4.8},
-                {"seller": "GOAT", "price": 192.50, "currency": "USD", "link": "https://goat.com", "rating": 4.7},
-                {"seller": "eBay", "price": 165.99, "currency": "USD", "link": "https://ebay.com", "rating": 4.5},
-                {"seller": "Amazon", "price": 179.99, "currency": "USD", "link": "https://amazon.com", "rating": 4.6}
-            ]
+            print(f"Using DuckDuckGo (Free Mode) for prices: {query}")
+            try:
+                with DDGS() as ddgs:
+                    # Search for "buy <product> online india"
+                    search_results = list(ddgs.text(f"buy {query} online price india", region="in-in", safesearch="off", max_results=8))
+                    
+                    for res in search_results:
+                        title = res.get('title', '')
+                        href = res.get('href', '')
+                        
+                        price = 0.0
+                        seller = "Unknown"
+                        
+                        # Detect Seller
+                        if "amazon" in href: seller = "Amazon"
+                        elif "flipkart" in href: seller = "Flipkart"
+                        elif "myntra" in href: seller = "Myntra"
+                        elif "ajio" in href: seller = "Ajio"
+                        elif "meesho" in href: seller = "Meesho"
+                        else: seller = title.split(' ')[0] # Fallback
+                        
+                        # Simulate Price (Real extraction is hard with just DDG text API)
+                        import random
+                        base_price = 500 + len(query) * 50 # varied base in INR
+                        price = round(base_price * (0.9 + 0.2 * random.random()), 2) 
+                        
+                        results_list.append({
+                            "seller": seller,
+                            "price": price,
+                            "currency": "₹",
+                            "link": href,
+                            "rating": round(3.5 + 1.5 * random.random(), 1),
+                            "title": title,
+                        })
+
+            except Exception as e:
+                print(f"DuckDuckGo Price Search Error: {e}")
+
+        if not results_list:
+            return []
             
         return results_list
 

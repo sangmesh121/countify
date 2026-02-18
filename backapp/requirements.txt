@@ -9,3 +9,4 @@ torch
 torchvision
 numpy
 scikit-learn
+google-search-results

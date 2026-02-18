@@ -1,138 +1,132 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
 import os
 import requests
 from dotenv import load_dotenv
 
+# Load environment variables FIRST
+load_dotenv()
+
 from services.gemini_service import gemini_service
 from services.search_service import search_service
 from services.verification_service import verification_service
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
-# Load environment variables
-load_dotenv()
+app = FastAPI()
 
-app = FastAPI(title="Counterfeit Detection API")
-
-# Configure CORS
+# CORS for development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins =["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 @app.get("/")
-async def root():
-    return {"message": "Counterfeit Detection API is running"}
+def root():
+    return {"message": "Product Verification API"}
 
 @app.post("/verify")
-async def verify_product(file: UploadFile = File(...)):
+async def verify_product(
+    file: UploadFile = File(None), 
+    front_image: UploadFile = File(None), 
+    back_image: UploadFile = File(None)
+):
     """
-    Verifies if a product image is authentic by:
-    1. Extracting features using Gemini.
-    2. Finding a reference image via Search.
-    3. Comparing images using CNN embeddings.
+    Verifies product authenticity using Chain-of-Thought Gemini analysis.
+    Works across all product categories without needing reference images or datasets.
+    Supports optional Front and Back images for better accuracy.
     """
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="File must be an image")
+    images_data = []
+    filenames = []
     
-    result = {
-        "filename": file.filename,
-        "input_analysis": None,
-        "reference_search": None,
-        "verification_result": None
-    }
+    # helper to process upload
+    async def add_image(upload_file):
+        if upload_file:
+            content = await upload_file.read()
+            images_data.append(content)
+            filenames.append(upload_file.filename)
 
+    await add_image(file)
+    await add_image(front_image)
+    await add_image(back_image)
+    
+    print(f"Received CoT verification request for: {filenames}")
+    
+    if not images_data:
+        raise HTTPException(status_code=400, detail="At least one image (file, front_image, or back_image) must be provided")
+    
     try:
-        # 1. Read file
-        content = await file.read()
+        # Use the new CoT verification method
+        print("Running Chain-of-Thought verification...")
+        cot_result = gemini_service.verify_product_authenticity(images_data)
         
-        # 2. Extract Features (Gemini)
-        print("Analyzing image with Gemini...")
-        gemini_data = gemini_service.extract_features(content)
-        result["input_analysis"] = gemini_data
+        # Check for errors in the CoT result
+        if "error" in cot_result and cot_result.get("verification", {}).get("is_authentic_guess") == "Error":
+            print(f"Verification error: {cot_result.get('error')}")
+            # Don't raise exception - return the error structure for frontend to handle
         
-        if "error" in gemini_data:
-            return result
-            
-        search_query = gemini_data.get("search_query")
-        if not search_query:
-            print("Gemini failed to generate search query. Using filename/default.")
-            search_query = file.filename or "product"
-            gemini_data["search_query"] = search_query 
-            # Continue instead of returning error
-            # result["input_analysis"]["error"] = "No search query generated"
-            # return result
-
-        # 3. Find Reference Image (Search)
-        print(f"Searching for reference image: {search_query}")
-        ref_url = search_service.find_reference_image(search_query)
-        result["reference_search"] = {"query": search_query, "found_url": ref_url}
+        # Extract verification details
+        product_info = cot_result.get("product_info", {})
+        verification = cot_result.get("verification", {})
         
-        if not ref_url:
-            result["verification_result"] = {"error": "Reference image not found"}
-            return result
-
-        # 4. Download Reference Image
-        print(f"Downloading reference image from {ref_url}...")
-        try:
-            # Fake headers to avoid some blocking
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'} 
-            ref_resp = requests.get(ref_url, headers=headers, timeout=10)
-            if ref_resp.status_code != 200:
-                 result["verification_result"] = {"error": f"Failed to download reference image. Status: {ref_resp.status_code}"}
-                 return result
-            ref_bytes = ref_resp.content
-        except Exception as e:
-            result["verification_result"] = {"error": f"Failed to download reference image: {str(e)}"}
-            return result
-
-        # 5. Compare Images (Hybrid Approach: CNN + Gemini)
-        print("Comparing images with CNN...")
-        cnn_result = verification_service.compare_images(content, ref_bytes)
-        
-        print("Comparing images with Gemini (Visual Analysis)...")
-        gemini_result = gemini_service.compare_products(content, ref_bytes)
-        
-        # Merge results
-        # Using Gemini's confidence if available, otherwise falling back to CNN
-        final_score = gemini_result.get("confidence_score", 0) if gemini_result.get("is_authentic") else cnn_result["similarity_score"]
-        
-        result["verification_result"] = {
-            "is_authentic": gemini_result.get("is_authentic", cnn_result["is_authentic"]),
-            "confidence_score": final_score,
-            "verdict": gemini_result.get("verdict", cnn_result["verdict"]),
-            "match_score": cnn_result["similarity_score"], # Keep raw CNN score
-            "gemini_analysis": gemini_result, # Full details
-            "cnn_analysis": cnn_result
+        # Format the response
+        result = {
+            "filename": ", ".join(filenames),
+            "product_info": {
+                "brand": product_info.get("brand", "Unknown"),
+                "model": product_info.get("model", "Unknown"),
+                "category": product_info.get("category", "Unknown")
+            },
+            "verification_result": {
+                "is_authentic": verification.get("is_authentic_guess") == "Authentic",
+                "verdict": verification.get("is_authentic_guess", "Error"),
+                "confidence_score": verification.get("confidence_score", 0) / 100,  # Convert to 0-1 scale
+                "anomalies": verification.get("anomalies_detected", []),
+                "reasoning": verification.get("detailed_reasoning", "No analysis available"),
+                "method": "Chain-of-Thought (CoT) Forensic Analysis"
+            },
+            "raw_forensic_analysis": cot_result.get("raw_forensic_analysis", {})
         }
-
+        
+        print(f"CoT Verification complete: {result['verification_result']['verdict']} ({result['verification_result']['confidence_score']*100:.0f}%)")
+        print(f"Product: {result['product_info']['brand']} {result['product_info']['model']} ({result['product_info']['category']})")
+        return result
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"Server Error: {e}")
+        print(f"Verification Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-    
-    return result
 
 @app.post("/price")
-async def check_price(file: UploadFile = File(...), sort: str = "price_asc"):
+async def check_price(
+    file: UploadFile = File(None),
+    front_image: UploadFile = File(None),
+    back_image: UploadFile = File(None),
+    sort: str = "price_asc"
+):
     """
-    Checks online prices for the product in the image.
+    Checks online prices for the product in the images.
     """
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="File must be an image")
+    images_data = []
+    
+    async def add_image(upload_file):
+        if upload_file:
+            images_data.append(await upload_file.read())
 
+    await add_image(file)
+    await add_image(front_image)
+    await add_image(back_image)
+    
+    if not images_data:
+        raise HTTPException(status_code=400, detail="At least one image must be provided")
+    
     try:
-        content = await file.read()
+        # 1. Identify Product Name
+        product_name = gemini_service.identify_product(images_data)
+        print(f"Identified product: {product_name}")
         
-        # 1. Identify Product
-        print("Identifying product for pricing...")
-        product_name = gemini_service.identify_product(content)
-        
-        if product_name == "unknown product":
-            return {"error": "Could not identify product", "prices": []}
-            
         # 2. Find Prices
         print(f"Finding prices for: {product_name}")
         prices = search_service.find_product_prices(product_name)
@@ -149,28 +143,46 @@ async def check_price(file: UploadFile = File(...), sort: str = "price_asc"):
             "product_name": product_name,
             "prices": prices
         }
-
+    
     except Exception as e:
         print(f"Price Check Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/details")
-async def get_details(file: UploadFile = File(...)):
+async def get_details(
+    file: UploadFile = File(None),
+    front_image: UploadFile = File(None),
+    back_image: UploadFile = File(None)
+):
     """
-    Analyzes image for detailed product specifications.
+    Analyzes images to provide detailed product specifications.
     """
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="File must be an image")
+    images_data = []
+    filenames = []
+    
+    async def add_image(upload_file):
+        if upload_file:
+            images_data.append(await upload_file.read())
+            filenames.append(upload_file.filename)
 
+    await add_image(file)
+    await add_image(front_image)
+    await add_image(back_image)
+    
+    if not images_data:
+        raise HTTPException(status_code=400, detail="At least one image must be provided")
+    
     try:
-        content = await file.read()
-        print("Analyzing for details...")
-        details = gemini_service.analyze_for_details(content)
-        return details
-
+        details = gemini_service.analyze_for_details(images_data)
+        
+        return {
+            **details,
+            "filename": ", ".join(filenames)
+        }
     except Exception as e:
         print(f"Details Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)
